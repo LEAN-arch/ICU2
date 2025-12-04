@@ -632,7 +632,9 @@ class Viz:
     def spc_charts(df, key):
         data = df['MAP'].to_numpy()
         xbar = np.mean(QualityAssurance.get_subgroups(data), axis=1)
-        fig = make_subplots(rows=1, cols=3, subplot_titles=("X-Bar", "R-Chart", "Gauge R&R"))
+        # FIX: Added specs for 'domain' type trace (Gauge)
+        fig = make_subplots(rows=1, cols=3, subplot_titles=("X-Bar", "R-Chart", "Gauge R&R"), 
+                            specs=[[{"type": "xy"}, {"type": "xy"}, {"type": "domain"}]])
         fig.add_trace(go.Scatter(y=xbar, mode='lines+markers'), row=1, col=1)
         fig.add_hline(y=np.mean(xbar)+3*np.std(xbar), line_color='red', row=1, col=1)
         fig.add_trace(go.Scatter(y=np.ptp(QualityAssurance.get_subgroups(data), axis=1), mode='lines+markers'), row=1, col=2)
@@ -734,7 +736,9 @@ class Viz:
     
     @staticmethod
     def ml_dashboard(res, key):
-        fig = make_subplots(rows=1, cols=2, subplot_titles=("Feature Imp (RF)", "Shock Prob (LogReg)"))
+        # FIX: Added specs for 'domain' type trace (Indicator)
+        fig = make_subplots(rows=1, cols=2, subplot_titles=("Feature Imp (RF)", "Shock Prob (LogReg)"),
+                            specs=[[{"type": "xy"}, {"type": "domain"}]])
         fig.add_trace(go.Bar(x=list(res['RF_Imp'].values()), y=list(res['RF_Imp'].keys()), orientation='h'), row=1, col=1)
         fig.add_trace(go.Indicator(mode="gauge+number", value=res['Shock_Prob']*100, title="Prob %"), row=1, col=2)
         fig.update_layout(height=200, margin=dict(l=10,r=10,t=30,b=20), title=f"ML Engine (XGB Pred MAP: {res['XGB_Pred']:.1f})")
