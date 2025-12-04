@@ -66,7 +66,9 @@ STYLING = f"""
     div[data-testid="stMetric"] div[data-testid="stMetricValue"] {{ font-family: 'Roboto Mono', monospace; font-size: 1.6rem; font-weight: 800; }}
     
     .status-banner {{ padding: 12px 20px; border-radius: 8px; background: {CONFIG.COLORS['card']}; border-left: 6px solid {CONFIG.COLORS['ai']}; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); display: flex; justify-content: space-between; align-items: center; }}
-    .clinical-hint {{ font-size: 0.8rem; color: {CONFIG.COLORS['text']}; background: #e0f2fe; padding: 10px; border-radius: 4px; margin-top: 5px; border-left: 4px solid {CONFIG.COLORS['info']}; }}
+    .clinical-hint {{ font-size: 0.8rem; color: #334155; background: #f1f5f9; padding: 12px; border-radius: 6px; margin-top: 5px; border-left: 4px solid {CONFIG.COLORS['info']}; }}
+    .action-header {{ font-weight: 800; text-transform: uppercase; color: {CONFIG.COLORS['crit']}; font-size: 0.75rem; margin-top: 4px; }}
+    .sig-header {{ font-weight: 800; text-transform: uppercase; color: {CONFIG.COLORS['info']}; font-size: 0.75rem; }}
     
     .crit-pulse {{ animation: pulse-red 1.5s infinite; color: {CONFIG.COLORS['crit']}; font-weight: 900; }}
     @keyframes pulse-red {{ 0% {{ opacity: 1; transform: scale(1); }} 50% {{ opacity: 0.6; transform: scale(1.05); }} 100% {{ opacity: 1; transform: scale(1); }} }}
@@ -384,6 +386,18 @@ class PatientSimulator:
 # ==========================================
 class Viz:
     @staticmethod
+    def render_guidance(title, sig, action):
+        st.markdown(f"""
+        <div class="clinical-hint">
+            <div style="font-weight:700; border-bottom:1px solid #cbd5e1; margin-bottom:5px;">{title}</div>
+            <div class="sig-header">CLINICAL SIGNIFICANCE</div>
+            <div style="font-size:0.8rem; margin-bottom:4px;">{sig}</div>
+            <div class="action-header">ACTION REQUIRED</div>
+            <div style="font-size:0.8rem;">{action}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    @staticmethod
     def spark(data, color, title):
         fig = px.line(x=np.arange(len(data)), y=data)
         fig.update_traces(line_color=color, line_width=2)
@@ -400,7 +414,7 @@ class Viz:
         # Current Point
         fig.add_trace(go.Scatter(x=[r['CI']], y=[r['SVRI']], mode='markers+text', 
                                  marker=dict(size=15, color='black'), text=["YOU"], textposition="top center"))
-        fig.update_layout(title="Hemo-Target", xaxis_title="CI", yaxis_title="SVRI", 
+        fig.update_layout(title="Hemo-Target (Forrester)", xaxis_title="CI", yaxis_title="SVRI", 
                           xaxis_range=[1, 6], yaxis_range=[400, 3500], height=250, margin=dict(l=20,r=20,t=30,b=20))
         return fig
 
@@ -420,7 +434,7 @@ class Viz:
     def spc_dashboard(df):
         data = df['MAP'].values
         # Subplots with DOMAIN spec for Gauge
-        fig = make_subplots(rows=1, cols=3, subplot_titles=("X-Bar (Mean)", "EWMA (Shift)", "Sensor MSA"),
+        fig = make_subplots(rows=1, cols=3, subplot_titles=("X-Bar (Acute)", "EWMA (Chronic)", "Sensor MSA"),
                             specs=[[{"type": "xy"}, {"type": "xy"}, {"type": "domain"}]])
         
         # X-Bar
@@ -563,12 +577,18 @@ class App:
             
             c5.metric("Shock Index", f"{curr['HR']/curr['MAP']:.2f}", "Normal < 0.7")
             c6.metric("CPO (Power)", f"{curr['CPO']:.2f}", "Watts (Crit < 0.6)")
+            
+            st.caption("Sparklines represent 60-minute trend. **Downward Slope on MAP** requires immediate pressor readiness. **Upward Slope on Lactate** indicates washout or worsening hypoperfusion.")
 
             # 2. Main Visualization Row
             c1, c2, c3 = st.columns(3)
             with c1:
                 st.plotly_chart(Viz.target_bullseye(df), use_container_width=True)
-                st.markdown(f"<div class='clinical-hint'><b>Interpretation:</b> Patient is in {shock_state}.<br><b>Rec:</b> {'Increase Vasopressor' if curr['SVRI'] < 1500 else 'Consider Inotrope/Fluids'}.</div>", unsafe_allow_html=True)
+                Viz.render_guidance(
+                    "HEMO-TARGET (Forrester)",
+                    "Diagnoses shock type via Quadrants. Top-Left: Cardiogenic (Cold/Wet). Bottom-Right: Distributive (Warm/Dry).",
+                    f"Current State: <b>{shock_state}</b>.<br>• If Top-Left: Start Inotropes (Dobutamine).<br>• If Bottom-Right: Start Vasopressors (Norepi).<br>• If High/High: Check fluid status/sedation."
+                )
             
             with c2:
                 # Forecast
@@ -581,37 +601,65 @@ class App:
                                             fill='toself', fillcolor='rgba(0,0,255,0.2)', line_width=0, name="90% CI"))
                 fig_fc.update_layout(title="Monte Carlo MAP Forecast (30min)", height=250, margin=dict(l=20,r=20,t=30,b=20))
                 st.plotly_chart(fig_fc, use_container_width=True)
-                st.markdown(f"<div class='clinical-hint'><b>Prediction:</b> MAP trending to {p50[-1]:.0f} mmHg.<br><b>Action:</b> {'Early Pressor Initiation' if p10[-1] < 60 else 'Monitor'}.</div>", unsafe_allow_html=True)
+                Viz.render_guidance(
+                    "PREDICTIVE ANALYTICS",
+                    "Projects MAP based on current volatility (Geometric Brownian Motion). Answers: 'Where will patient be in 30m?'",
+                    f"• <b>Cone < 65 mmHg:</b> Start/Increase pressors NOW. Do not wait for hypotension.<br>• <b>Wide Cone:</b> High volatility. Stop titrating to allow equilibration."
+                )
 
             with c3:
                 st.plotly_chart(Viz.starling_curve(df), use_container_width=True)
                 ppv = curr['PPV']
-                st.markdown(f"<div class='clinical-hint'><b>Fluid Responsiveness:</b> PPV is {ppv:.1f}%.<br><b>Action:</b> {'Responder - Give Fluid' if ppv > 12 else 'Non-Responder - Stop Fluid'}.</div>", unsafe_allow_html=True)
+                Viz.render_guidance(
+                    "FRANK-STARLING / PRELOAD",
+                    "Determines Fluid Responsiveness via Stroke Volume curve. Steep = Responder. Flat = Non-Responder.",
+                    f"PPV is <b>{ppv:.1f}%</b>.<br>• <b>>12% (Steep):</b> GIVE FLUIDS (500mL Bolus).<br>• <b><12% (Flat):</b> STOP FLUIDS. Start Inotropes/Pressors. Risk of Pulmonary Edema."
+                )
 
         with t2_tab:
             c1, c2 = st.columns(2)
             with c1:
                 st.info(f"Forensic Analysis: {forensic_msg}")
-                st.write(f"Explanation: {forensic_reason}")
-                st.write(f"Granger Causality (HR -> MAP): {granger}")
-                
                 # Anomaly Timeline
                 fig_anom = px.scatter(df.iloc[-100:], x="Time", y="MAP", color=df['anomaly'].iloc[-100:].astype(str), 
                                       color_discrete_map={'-1': 'red', '1': 'blue'}, title="Isolation Forest Anomalies")
                 fig_anom.update_layout(height=250, margin=dict(l=20,r=20,t=30,b=20))
                 st.plotly_chart(fig_anom, use_container_width=True)
+                Viz.render_guidance(
+                    "ISOLATION FOREST",
+                    "Unsupervised ML detects data points that deviate from patient's physiological history.",
+                    "• <b>Red Clusters:</b> Acute Event (Arrhythmia, Bleeding, Kinked Line). INSPECT PATIENT.<br>• <b>Sparse Red Dots:</b> Likely sensor artifact/movement."
+                )
                 
             with c2:
                 # Spectral Entropy Trend
                 fig_spec = go.Figure(go.Scatter(y=df['HR'].rolling(30).std().iloc[-100:], name="HRV"))
                 fig_spec.update_layout(title="Autonomic Complexity (HRV)", height=250, margin=dict(l=20,r=20,t=30,b=20))
                 st.plotly_chart(fig_spec, use_container_width=True)
+                Viz.render_guidance(
+                    "AUTONOMIC COMPLEXITY",
+                    f"Measures Nervous System Reserve via HRV. Current Entropy: {spec_ent:.2f}.",
+                    "• <b>High Variability:</b> Intact Autonomic System.<br>• <b>Flatline (Metronomic Rigidity):</b> Loss of regulation. Precedes Cardiac Arrest. Reduce sedation, check electrolytes."
+                )
                 
                 st.metric("Hemodynamic Coherence (r)", f"{coherence:.2f}", "Ideal < -0.5")
 
         with t3:
             st.plotly_chart(Viz.spc_dashboard(df), use_container_width=True)
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                Viz.render_guidance("SPC (X-Bar vs EWMA)", "Differentiates Signal vs Noise.", "• <b>X-Bar Violation:</b> Acute event (Embolus, Bolus).<br>• <b>EWMA Drift:</b> 'Silent Killer'. Detects occult bleeding/sepsis early.")
+            with c2:
+                Viz.render_guidance("GAUGE R&R (MSA)", "Ratio of Patient Variance vs Sensor Noise.", "• <b>Green (<10%):</b> Trust Data.<br>• <b>Red (>30%):</b> NOISE. Do not treat number. Flush line/Zero transducer.")
+            with c3:
+                Viz.render_guidance("SENSOR MSA", "Measurement System Analysis.", "Ensures data integrity before treatment.")
+
             st.plotly_chart(Viz.method_comp_plot(df), use_container_width=True)
+            Viz.render_guidance(
+                "BLAND-ALTMAN (Method Comp)", 
+                "Compares Invasive Art-Line vs NIBP Cuff.",
+                "• <b>Clusters at 0:</b> Accurate.<br>• <b>Large Bias:</b> Damping issue. Perform Square-Wave Flush Test. Trust NIBP until resolved."
+            )
             
             # Multivariate SPC
             fig_mspc = make_subplots(rows=1, cols=2, subplot_titles=("T² (State Dev)", "SPE (Residual)"))
@@ -620,6 +668,11 @@ class App:
             fig_mspc.add_trace(go.Scatter(y=spe[-60:], fill='tozeroy', name="SPE"), row=1, col=2)
             fig_mspc.update_layout(height=200, margin=dict(l=10,r=10,t=30,b=20))
             st.plotly_chart(fig_mspc, use_container_width=True)
+            Viz.render_guidance(
+                "MULTIVARIATE SPC (Physiological Coupling)",
+                "T2 = Total distance from normal state. SPE = Break in correlation between vitals.",
+                "• <b>High T2:</b> Severe Illness/Multi-organ failure.<br>• <b>High SPE:</b> 'Uncoupling'. Regulatory mechanisms broken. Aggressive resuscitation required."
+            )
 
         with t4:
             st.write("Research Data - Phase Space")
@@ -627,6 +680,11 @@ class App:
                                             mode='lines', line=dict(color=df.index, colorscale='Viridis', width=3)))
             fig_3d.update_layout(scene=dict(xaxis_title='MAP', yaxis_title='Lactate', zaxis_title='HR'), height=400)
             st.plotly_chart(fig_3d, use_container_width=True)
+            Viz.render_guidance(
+                "PHASE SPACE ATTRACTOR",
+                "Visualizes the trajectory of the physiological system.",
+                "• <b>Tight Orbit:</b> Stable/Compensated.<br>• <b>Chaotic/Wide Loops:</b> Unstable. Simplify drug regimen to re-stabilize."
+            )
 
 if __name__ == "__main__":
     app = App()
